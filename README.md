@@ -32,6 +32,18 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## Smarter Scheduling
+
+Beyond the basic priority-and-time-budget scheduler, PawPal+ includes four algorithmic improvements:
+
+- **Sort by time** — `Scheduler.sort_by_time()` orders the scheduled task list by `start_time` (HH:MM strings), with flexible tasks (no start time) pushed to the end. Uses a `lambda` key: tasks without a time are mapped to `"99:99"` so Python's `sorted()` places them last.
+
+- **Filtering** — `Scheduler.filter_tasks(pet_name, completed)` lets you query tasks by pet and/or completion status across all pets, making it easy to display "Mochi's pending tasks" or "everything completed today."
+
+- **Recurring tasks** — `Task.mark_complete()` checks the task's `frequency` ("once", "daily", "weekly") and returns a new `Task` with the next due date calculated via Python's `timedelta`. `Pet.mark_task_complete(title)` calls this and automatically appends the next instance to the pet's task list, so recurring care never falls off the schedule.
+
+- **Conflict detection** — `Scheduler.detect_conflicts()` groups scheduled tasks by `start_time` and returns a warning string for any slot occupied by more than one task. Detection uses exact HH:MM matching; see `reflection.md §2b` for the tradeoff this implies.
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
