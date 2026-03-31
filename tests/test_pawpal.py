@@ -214,3 +214,203 @@ def test_filter_tasks_by_completion():
     pending = scheduler.filter_tasks(completed=False)
     assert len(pending) == 1
     assert pending[0].title == "Feed"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — empty / boundary conditions
+# ---------------------------------------------------------------------------
+
+def test_schedule_is_empty_when_pet_has_no_tasks():
+    """A pet with no tasks should produce an empty schedule."""
+    owner = Owner(name="Jordan", available_minutes=60)
+    owner.add_pet(Pet(name="Mochi", species="dog", age=3))
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert scheduler.schedule == []
+    assert scheduler.get_total_duration() == 0
+
+
+def test_schedule_is_empty_when_owner_has_no_pets():
+    """An owner with no pets should produce an empty schedule."""
+    owner = Owner(name="Jordan", available_minutes=60)
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert scheduler.schedule == []
+
+
+def test_schedule_is_empty_when_budget_is_zero():
+    """With zero available minutes, no tasks should be scheduled."""
+    owner = Owner(name="Jordan", available_minutes=0)
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Walk", duration_minutes=20, priority="high"))
+    owner.add_pet(pet)
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert scheduler.schedule == []
+
+
+def test_task_that_exactly_fills_budget_is_scheduled():
+    """A task whose duration equals the available minutes should be included."""
+    owner = Owner(name="Jordan", available_minutes=30)
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Exact fit", duration_minutes=30, priority="high"))
+    owner.add_pet(pet)
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert len(scheduler.schedule) == 1
+    assert scheduler.get_total_duration() == 30
+
+
+def test_sort_by_time_on_empty_schedule_returns_empty_list():
+    """sort_by_time() on an empty schedule should return [] without crashing."""
+    owner = Owner(name="Jordan", available_minutes=60)
+    owner.add_pet(Pet(name="Mochi", species="dog", age=3))
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert scheduler.sort_by_time() == []
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — conflict detection
+# ---------------------------------------------------------------------------
+
+def test_detect_conflicts_returns_empty_when_no_conflicts():
+    """detect_conflicts() should return an empty list when all start times are unique."""
+    owner = Owner(name="Jordan", available_minutes=60)
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Walk",  20, "high",   start_time="07:00"))
+    pet.add_task(Task("Feed",  10, "high",   start_time="08:00"))
+    owner.add_pet(pet)
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert scheduler.detect_conflicts() == []
+
+
+def test_detect_conflicts_ignores_tasks_without_start_time():
+    """Tasks with no start_time should never be flagged as conflicting."""
+    owner = Owner(name="Jordan", available_minutes=60)
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Task A", 10, "high", start_time=None))
+    pet.add_task(Task("Task B", 10, "high", start_time=None))
+    owner.add_pet(pet)
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    assert scheduler.detect_conflicts() == []
+
+
+def test_detect_conflicts_across_multiple_pets():
+    """Conflicts between different pets sharing a start_time should be flagged."""
+    owner = Owner(name="Jordan", available_minutes=120)
+    mochi = Pet(name="Mochi", species="dog", age=3)
+    luna  = Pet(name="Luna",  species="cat", age=5)
+    mochi.add_task(Task("Walk",    30, "high",   start_time="09:00"))
+    luna.add_task(Task("Playtime", 20, "medium", start_time="09:00"))
+    owner.add_pet(mochi)
+    owner.add_pet(luna)
+
+    scheduler = Scheduler(owner)
+    scheduler.generate_schedule()
+    conflicts = scheduler.detect_conflicts()
+    assert len(conflicts) == 1
+    assert "09:00" in conflicts[0]
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — filtering
+# ---------------------------------------------------------------------------
+
+def test_filter_tasks_unknown_pet_name_returns_empty():
+    """filter_tasks() with a name that matches no pet should return []."""
+    owner = Owner(name="Jordan", available_minutes=60)
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Walk", 20, "high"))
+    owner.add_pet(pet)
+
+    scheduler = Scheduler(owner)
+    assert scheduler.filter_tasks(pet_name="Fluffy") == []
+
+
+def test_filter_tasks_combined_pet_and_completion():
+    """filter_tasks with both pet_name and completed should apply both filters."""
+    owner = Owner(name="Jordan", available_minutes=120)
+    mochi = Pet(name="Mochi", species="dog", age=3)
+    done = Task("Walk", 20, "high")
+    done.mark_complete()
+    mochi.add_task(done)
+    mochi.add_task(Task("Feed", 10, "high"))
+    owner.add_pet(mochi)
+
+    scheduler = Scheduler(owner)
+    # Only Mochi's completed tasks
+    results = scheduler.filter_tasks(pet_name="Mochi", completed=True)
+    assert len(results) == 1
+    assert results[0].title == "Walk"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — recurring task property inheritance
+# ---------------------------------------------------------------------------
+
+def test_recurring_task_next_instance_inherits_all_properties():
+    """The next occurrence of a recurring task should inherit title, duration,
+    priority, category, start_time, and frequency from the original."""
+    original = Task(
+        title="Morning walk",
+        duration_minutes=25,
+        priority="high",
+        category="exercise",
+        start_time="07:00",
+        frequency="daily",
+        due_date=date.today(),
+    )
+    next_task = original.mark_complete()
+
+    assert next_task is not None
+    assert next_task.title        == original.title
+    assert next_task.duration_minutes == original.duration_minutes
+    assert next_task.priority     == original.priority
+    assert next_task.category     == original.category
+    assert next_task.start_time   == original.start_time
+    assert next_task.frequency    == original.frequency
+    assert next_task.completed    is False
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — safe no-ops
+# ---------------------------------------------------------------------------
+
+def test_remove_nonexistent_task_does_not_crash():
+    """remove_task() with a title that doesn't exist should leave the list unchanged."""
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Walk", 20, "high"))
+    pet.remove_task("NonExistentTask")
+    assert len(pet.tasks) == 1
+
+
+def test_mark_task_complete_nonexistent_title_is_safe():
+    """mark_task_complete() with a title that doesn't exist should not crash or mutate tasks."""
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task("Walk", 20, "high"))
+    pet.mark_task_complete("Ghost task")
+    assert len(pet.tasks) == 1
+    assert pet.tasks[0].completed is False
+
+
+# ---------------------------------------------------------------------------
+# to_dict completeness
+# ---------------------------------------------------------------------------
+
+def test_to_dict_contains_all_expected_keys():
+    """to_dict() should include all seven expected fields."""
+    task = Task("Walk", 20, "high", category="exercise", start_time="08:00", frequency="daily")
+    d = task.to_dict()
+    expected_keys = {"title", "duration_minutes", "priority", "category",
+                     "start_time", "frequency", "due_date", "completed"}
+    assert expected_keys == set(d.keys())
