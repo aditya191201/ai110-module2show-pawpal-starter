@@ -4,6 +4,12 @@
 
 ---
 
+## 📸 Demo
+
+<a href="screenshot.png" target="_blank"><img src="screenshot.png" title="PawPal App" width="100%" alt="PawPal App" /></a>
+
+---
+
 ## Scenario
 
 A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
