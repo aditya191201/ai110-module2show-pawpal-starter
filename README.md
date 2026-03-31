@@ -1,6 +1,8 @@
-# PawPal+ (Module 2 Project)
+# 🐾 PawPal+
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a Streamlit app that helps a busy pet owner stay consistent with daily pet care. It generates a prioritized daily schedule across multiple pets, detects scheduling conflicts, handles recurring tasks, and explains every decision it makes.
+
+---
 
 ## Scenario
 
@@ -10,19 +12,27 @@ A busy pet owner needs help staying consistent with pet care. They want an assis
 - Consider constraints (time available, priority, owner preferences)
 - Produce a daily plan and explain why it chose that plan
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+---
 
-## What you will build
+## Features
 
-Your final app should:
+### Core Scheduling
+- **Priority-based greedy scheduler** — tasks are ranked high → medium → low and selected in that order until the owner's time budget is exhausted. Critical care (medication, feeding) is always prioritized over enrichment.
+- **Time budget enforcement** — the owner sets available minutes for the day; the scheduler never exceeds it.
+- **Plain-English explanation** — after generating a schedule, the app explains which tasks were chosen, which were skipped, and why.
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+### Smarter Scheduling
+- **Sort by time** — the generated schedule can be reordered chronologically by `start_time` (HH:MM). Tasks without a set time are placed at the end as "flexible."
+- **Conflict detection** — if two tasks share the same `start_time` slot, the app surfaces a visible warning so the owner can resolve it before the day begins.
+- **Recurring tasks** — tasks can be marked `daily` or `weekly`. When completed, the next occurrence is automatically added to the pet's task list with the correct due date (calculated via Python's `timedelta`).
+- **Filtering** — tasks can be browsed by pet or by completion status (pending / completed / all).
 
-## Getting started
+### Multi-Pet Support
+- The owner can register multiple pets. Each pet has its own task list. The scheduler aggregates and prioritizes tasks across all pets in a single daily plan.
+
+---
+
+## Getting Started
 
 ### Setup
 
@@ -32,17 +42,19 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Smarter Scheduling
+### Run the app
 
-Beyond the basic priority-and-time-budget scheduler, PawPal+ includes four algorithmic improvements:
+```bash
+streamlit run app.py
+```
 
-- **Sort by time** — `Scheduler.sort_by_time()` orders the scheduled task list by `start_time` (HH:MM strings), with flexible tasks (no start time) pushed to the end. Uses a `lambda` key: tasks without a time are mapped to `"99:99"` so Python's `sorted()` places them last.
+### Run the manual demo
 
-- **Filtering** — `Scheduler.filter_tasks(pet_name, completed)` lets you query tasks by pet and/or completion status across all pets, making it easy to display "Mochi's pending tasks" or "everything completed today."
+```bash
+python3 main.py
+```
 
-- **Recurring tasks** — `Task.mark_complete()` checks the task's `frequency` ("once", "daily", "weekly") and returns a new `Task` with the next due date calculated via Python's `timedelta`. `Pet.mark_task_complete(title)` calls this and automatically appends the next instance to the pet's task list, so recurring care never falls off the schedule.
-
-- **Conflict detection** — `Scheduler.detect_conflicts()` groups scheduled tasks by `start_time` and returns a warning string for any slot occupied by more than one task. Detection uses exact HH:MM matching; see `reflection.md §2b` for the tradeoff this implies.
+---
 
 ## Testing PawPal+
 
@@ -52,7 +64,7 @@ Run the full test suite with:
 python -m pytest
 ```
 
-Or for verbose output showing each test name:
+Verbose output (shows each test name):
 
 ```bash
 python -m pytest tests/ -v
@@ -66,7 +78,7 @@ python -m pytest tests/ -v
 | Recurring logic | Daily/weekly tasks return a correctly-dated next instance; one-time tasks return `None`; next instance inherits all properties |
 | Pet task management | Add, remove, priority sort; `mark_task_complete()` auto-appends next occurrence |
 | Scheduler — happy paths | Respects time budget; prefers high priority; excludes already-completed tasks |
-| Scheduler — sorting | `sort_by_time()` orders HH:MM chronologically; flexible tasks (no time) go last |
+| Scheduler — sorting | `sort_by_time()` orders HH:MM chronologically; flexible tasks go last |
 | Scheduler — filtering | By pet name, by completion status, by both combined; unknown name returns `[]` |
 | Conflict detection | Flags duplicate start times within and across pets; ignores tasks with no start time; returns `[]` when no conflicts |
 | Edge cases / safe no-ops | Empty pet, no pets, zero-budget → empty schedule; exact-budget-fit task is scheduled; remove/complete on missing title doesn't crash |
@@ -74,9 +86,24 @@ python -m pytest tests/ -v
 
 **Confidence level: ★★★★☆ (4/5)**
 
-The greedy priority scheduler, sorting, filtering, recurring logic, and conflict detection are all well-covered. The remaining uncertainty is the exact-match conflict detection tradeoff (see `reflection.md §2b`) — overlapping-duration conflicts between tasks with different start times are not yet caught.
+All implemented behaviors are covered including boundary conditions. The known gap is duration-overlap conflict detection — tasks at adjacent but overlapping time slots are not yet flagged (see `reflection.md §2b`).
 
-### Suggested workflow
+---
+
+## Project Structure
+
+```
+pawpal_system.py     # Backend — Task, Pet, Owner, Scheduler classes
+app.py               # Streamlit UI
+main.py              # Terminal demo (manual testing ground)
+tests/
+  test_pawpal.py     # 31 automated tests
+reflection.md        # Design decisions, tradeoffs, AI collaboration notes
+```
+
+---
+
+## Suggested Workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
 2. Draft a UML diagram (classes, attributes, methods, relationships).

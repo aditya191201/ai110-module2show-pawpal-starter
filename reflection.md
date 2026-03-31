@@ -30,7 +30,7 @@ The system is built around four classes. `Task` is the smallest unit of data: it
 - `Pet` has many `Task`s
 - `Scheduler` takes an `Owner` (and through it, accesses `Pet` and `Task`s)
 
-**UML Class Diagram (Mermaid.js):**
+**UML Class Diagram — Initial (Mermaid.js):**
 
 I am designing a pet care app called PawPal+ with four core classes: `Task`, `Pet`, `Owner`, and `Scheduler`. Together they model a pet owner's daily care routine and the logic that turns a task list into a prioritized daily plan.
 
@@ -78,15 +78,63 @@ classDiagram
     Scheduler "1" --> "0..*" Task : schedules
 ```
 
-**Design review notes:**
-- `Owner → Pet` is a one-to-one relationship (simple scope for this app).
-- `Pet → Task` is one-to-many — a pet can have any number of care tasks.
-- `Scheduler → Owner` is a uses/dependency relationship; it does not own the Owner, it reads from it.
-- No unnecessary intermediate classes (e.g., no `TaskList` wrapper — `Pet.tasks` is sufficient).
-- `category` on `Task` is kept as a plain string to avoid over-engineering an enum for now.
+**UML Class Diagram — Final (Mermaid.js):**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+Updated to reflect all attributes and methods added during implementation.
+
+```mermaid
+classDiagram
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str category
+        +str start_time
+        +str frequency
+        +date due_date
+        +bool completed
+        +mark_complete() Task
+        +to_dict() dict
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +int age
+        +list tasks
+        +add_task(task: Task)
+        +remove_task(title: str)
+        +get_tasks_by_priority() list
+        +mark_task_complete(title: str)
+    }
+
+    class Owner {
+        +str name
+        +int available_minutes
+        +list pets
+        +add_pet(pet: Pet)
+        +set_availability(minutes: int)
+        +get_all_tasks() list
+    }
+
+    class Scheduler {
+        +Owner owner
+        +list schedule
+        +generate_schedule() list
+        +explain_schedule() str
+        +get_total_duration() int
+        +sort_by_time() list
+        +filter_tasks(pet_name, completed) list
+        +detect_conflicts() list
+        -_fit_within_budget(tasks) list
+    }
+
+    Owner "1" --> "0..*" Pet : has
+    Pet "1" --> "0..*" Task : has
+    Scheduler "1" --> "1" Owner : uses
+    Scheduler "1" --> "0..*" Task : schedules
+    Task "1" --> "0..1" Task : recurs as
+```
 
 **b. Design changes**
 
@@ -94,9 +142,21 @@ Reviewing the initial diagram revealed three issues, one missing relationship an
 
 1. **Missing `Scheduler → Task` relationship (fixed in diagram).** `Scheduler.schedule` is a `list[Task]`, so `Scheduler` directly reads and stores `Task` objects. The original diagram only showed `Scheduler → Owner`, leaving this dependency invisible. Added a `Scheduler "1" --> "0..*" Task : schedules` arrow to make it explicit.
 
-2. **`Task.priority` is an unordered string — sorting bottleneck.** The values `"low"`, `"medium"`, and `"high"` have no natural Python sort order. Without an explicit priority map (e.g. `{"high": 0, "medium": 1, "low": 2}`), any sort will silently produce wrong results (alphabetical order puts `"high"` before `"low"` before `"medium"`). This needs to be handled carefully inside `Scheduler.generate_schedule()` or `Pet.get_tasks_by_priority()`.
+2. **`Task.priority` is an unordered string — sorting bottleneck.** The values `"low"`, `"medium"`, and `"high"` have no natural Python sort order. Without an explicit priority map (`{"high": 0, "medium": 1, "low": 2}`), any sort will silently produce wrong results. Resolved by defining `_PRIORITY_RANK` as a module-level constant used by all sort keys.
 
-3. **`generate_schedule()` risks becoming a logic bottleneck.** A single method that reads tasks, filters by time budget, sorts by priority, and builds the schedule is hard to test and debug in isolation. Plan to split it into private helpers (e.g. `_sort_tasks()`, `_fit_within_budget()`) so each concern can be verified independently.
+3. **`generate_schedule()` risks becoming a logic bottleneck.** A single method doing everything is hard to test. Resolved by extracting `_fit_within_budget()` as a private helper so each concern can be verified independently.
+
+**Additional changes made during implementation:**
+
+4. **`Owner` was redesigned to hold multiple pets.** The initial design had `Owner` with a single `pet: Pet` attribute. Implementation expanded this to `pets: list[Pet]` with an `add_pet()` method and a `get_all_tasks()` method that aggregates and sorts across all pets.
+
+5. **`Task` gained three new fields for smarter scheduling.** `start_time` (HH:MM string), `frequency` ("once"/"daily"/"weekly"), and `due_date` were added to support time-sorted display, recurring task generation, and conflict detection.
+
+6. **`mark_complete()` became a factory method.** Originally a void mutator, it was redesigned to return a new `Task` instance for recurring tasks (or `None` for one-time tasks), which keeps `Task` self-contained and makes the recurrence logic easy to test in isolation.
+
+7. **`Pet.mark_task_complete()` was added.** This method owns the responsibility of completing a task and appending the next occurrence — so `Pet` manages its own list, and callers don't need to handle the returned Task themselves.
+
+8. **`Scheduler` gained three algorithmic methods.** `sort_by_time()`, `filter_tasks()`, and `detect_conflicts()` were all absent from the initial design and emerged as requirements during the implementation phase.
 
 ---
 
@@ -104,14 +164,15 @@ Reviewing the initial diagram revealed three issues, one missing relationship an
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers two constraints: **task priority** and **owner time budget**. Priority is the primary sort key — tasks ranked high, medium, then low are evaluated in that order. The time budget acts as a hard cut-off: once the remaining available minutes cannot fit the next task, it is skipped (even if a later, shorter task could still fit). An optional `start_time` on each task enables time-sorted display and conflict detection, but does not affect which tasks are selected — the selection algorithm is purely priority-and-budget-greedy.
+
+Priority was treated as the most important constraint because the core scenario is a busy owner who cannot do everything — they need to be sure the most critical care (medication, feeding) happens first, even if enrichment tasks get dropped. Time budget is second because it is the hard real-world limit that no algorithm can override.
 
 **b. Tradeoffs**
 
-The conflict detector uses **exact HH:MM string matching** rather than checking whether task durations overlap in time. This means two tasks flagged as conflicting at `"08:00"` might not actually collide in practice — for example, a 5-minute task starting at 08:00 and a 60-minute task also starting at 08:00 genuinely overlap, but a future task scheduled for 08:00 that completes by 08:05 and another starting at 08:06 would be a false alarm if both carried the label `"08:00"`. Conversely, a task at `"08:00"` lasting 30 minutes and a task at `"08:15"` are actually overlapping but would go completely undetected.
+The conflict detector uses **exact HH:MM string matching** rather than checking whether task durations overlap in time. This means two tasks flagged as conflicting at `"08:00"` might not actually collide — a 5-minute task and a 60-minute task both labelled `"08:00"` genuinely conflict, but two tasks labelled `"08:00"` and `"08:06"` are effectively back-to-back yet undetected as a conflict. Conversely, a 30-minute task at `"08:00"` and a task at `"08:15"` are actually overlapping but go unflagged.
 
-This tradeoff is reasonable for the current scope because: most pet care tasks are assigned to a rough time of day (morning, evening) rather than a precise clock time, so exact-match detection catches the most common mistake (assigning two tasks the same slot label) without requiring the added complexity of interval arithmetic. A full overlap check would require tracking both a `start_time` and an `end_time` or computing end = start + duration, which is a meaningful addition that can be added in a future iteration.
+This tradeoff is reasonable for the current scope because most pet care tasks are assigned to a rough time-of-day slot rather than a precise clock time. Exact-match detection catches the most common user error (assigning two tasks the same slot label) without requiring interval arithmetic. A full overlap check — computing `end_time = start_time + duration` and testing for range intersections — is a meaningful but scoped future improvement.
 
 ---
 
@@ -119,13 +180,15 @@ This tradeoff is reasonable for the current scope because: most pet care tasks a
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI was used throughout every phase: brainstorming the initial class structure, generating method stubs from the UML diagram, suggesting edge cases to test, and explaining Python-specific idioms (e.g. using a `lambda` key with `sorted()` for the `"99:99"` sentinel pattern in `sort_by_time()`). The most effective prompts were specific and scoped — for example, "given this `Task` class with a `frequency` field, how should `mark_complete()` return the next occurrence?" — rather than broad requests like "build a pet scheduler." Targeted prompts produced code that was close to correct and needed only minor structural adjustments.
+
+For debugging, asking "why is this test failing — is the bug in my test or my logic?" consistently produced useful diagnoses. For design, asking "what edge cases should I test for a greedy scheduler?" surfaced cases (zero budget, exact-fit tasks, tasks with no start time) that might otherwise have been missed.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+When AI generated an initial version of `generate_schedule()`, it placed all scheduling logic — priority sorting, time filtering, and schedule building — inside a single method body. The suggestion worked correctly but was difficult to test: any test failure could come from any of three different concerns, with no way to isolate which one. The method was refactored to extract `_fit_within_budget()` as a private helper so that sorting and selection could be verified independently. This change was not suggested by the AI; it came from recognising that testability is a design goal, not just a runtime goal. The AI's output was verified by running the test suite before and after refactoring and confirming that all 31 tests passed with the new structure.
+
+A second rejection: AI initially suggested using Python's `datetime.strptime` to parse and compare `start_time` strings for conflict detection. This was replaced with direct string comparison (`t.start_time or "99:99"`), which is simpler, has no failure mode from malformed input at the comparison step, and is sufficient for the HH:MM format. The tradeoff was documented in reflection §2b so future maintainers understand the limitation.
 
 ---
 
@@ -133,13 +196,21 @@ This tradeoff is reasonable for the current scope because: most pet care tasks a
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite covers 31 behaviors across five categories:
+
+- **Task lifecycle** — `mark_complete()` flips status; calling it twice is safe; one-time tasks return `None`; daily/weekly tasks return a correctly-dated next instance that inherits all properties from the original.
+- **Pet task management** — `add_task`, `remove_task`, `get_tasks_by_priority`, and `mark_task_complete` (which auto-appends next recurrence). Safe no-ops for non-existent titles are tested explicitly.
+- **Scheduler core** — respects time budget; prefers high priority; excludes already-completed tasks from new schedules; task that exactly fills the budget is included (boundary condition).
+- **Algorithmic methods** — `sort_by_time()` produces chronological HH:MM order with flexible tasks last; `filter_tasks()` filters by pet, by status, and by both combined; `detect_conflicts()` flags shared slots within and across pets, ignores tasks with no start time, and returns `[]` when no conflicts exist.
+- **Data integrity** — `to_dict()` returns all eight expected fields.
+
+These tests are important because the scheduler's correctness is invisible at runtime — wrong priority ordering or a missed conflict doesn't cause a crash, it silently produces a bad schedule. Tests catch the difference.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+Confidence level: **★★★★☆ (4/5)**
+
+All implemented behaviors are covered, including boundary conditions and safe no-ops. The remaining gap is the exact-match conflict detection limitation: tasks that overlap in duration but have different start time strings are not flagged. Testing for duration-overlap detection would require interval arithmetic logic that has not yet been implemented. If given more time, the next tests to write would be: tasks with overlapping durations at adjacent start times, a schedule where the budget is exactly zero, and a recurring task completed multiple times in sequence to verify the chain of due dates is correct.
 
 ---
 
@@ -147,12 +218,12 @@ This tradeoff is reasonable for the current scope because: most pet care tasks a
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The separation of concerns between classes worked well in practice. Because `Task.mark_complete()` is responsible for generating the next occurrence and returns it rather than mutating any external list, it was trivially testable: pass in a task, call the method, check the return value. This pattern — methods that return values rather than relying on side effects — made every algorithmic method easy to unit test in isolation, which kept the debugging cycle short throughout the project.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+The conflict detector would be the first thing to redesign. Upgrading from exact-match string comparison to full interval overlap detection (computing `end = start + duration` in minutes and testing for range intersection) would make the warning system genuinely reliable rather than approximate. A second improvement would be adding a `ScheduledSlot` data class that pairs a `Task` with an explicit `start_datetime`, so the display can show real clock times ("08:00 – 08:30") rather than relative elapsed minutes.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important lesson was that **AI is most useful as a first-draft generator, not a final decision-maker**. Every class, method, and test started from an AI suggestion, but almost none were accepted without reading, questioning, and often restructuring. The moment that crystallized this was the `generate_schedule()` refactor: the AI's version worked, but working and well-designed are different things. Acting as the lead architect meant evaluating AI output not just for correctness but for testability, clarity, and alignment with the system's design goals — a skill that requires understanding the system well enough to know what "good" looks like before the code exists.
